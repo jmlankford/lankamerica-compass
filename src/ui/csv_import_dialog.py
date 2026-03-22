@@ -39,7 +39,7 @@ FIELD_OPTIONS_SINGLE = [
     ("memo",         "Memo"),
     ("category",     "Category"),
     ("amount",       "Amount  (+credit / −debit)"),
-    ("reconciled",   "Reconciled"),
+    ("cleared",      "Cleared"),
 ]
 
 FIELD_OPTIONS_TWO = [
@@ -52,7 +52,7 @@ FIELD_OPTIONS_TWO = [
     ("category",     "Category"),
     ("debit",        "Debit (money out)"),
     ("credit",       "Credit (money in)"),
-    ("reconciled",   "Reconciled"),
+    ("cleared",      "Cleared"),
 ]
 
 DATE_FORMATS: List[Tuple[str, str]] = [
@@ -117,7 +117,7 @@ def _auto_suggest(header: str, field_keys: List[str]) -> str:
     if any(k in h for k in ('credit', 'cr', 'deposit', 'in')):
         return 'credit' if 'credit' in field_keys else 'ignore'
     if any(k in h for k in ('reconcil', 'cleared', 'clr')):
-        return 'reconciled'
+        return 'cleared'
     return 'ignore'
 
 
@@ -496,7 +496,7 @@ class CsvImportDialog(QDialog):
     def _populate_preview(self):
         cols_keys = [
             'date', 'type', 'check_number', 'description',
-            'memo', 'category', 'debit', 'credit', 'reconciled'
+            'memo', 'category', 'debit', 'credit', 'cleared'
         ]
         cols_labels = [
             "Date", "Type", "Check #", "Description",
@@ -515,7 +515,7 @@ class CsvImportDialog(QDialog):
                         val = f"${float(val):.2f}"
                     except (ValueError, TypeError):
                         pass
-                elif key == 'reconciled':
+                elif key == 'cleared':
                     val = "Yes" if val else "No"
                 item = QTableWidgetItem(str(val) if val else '')
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -679,9 +679,9 @@ class CsvImportDialog(QDialog):
                         tx['category_id'] = cat_id
                     tx['category'] = val  # display only
 
-                elif field_key == 'reconciled':
+                elif field_key == 'cleared':
                     v = val.lower()
-                    tx['reconciled'] = 1 if v in ('true', 'yes', 'y', '1', 'r', 'x', 'cleared') else 0
+                    tx['cleared'] = 1 if v in ('true', 'yes', 'y', '1', 'r', 'x', 'cleared') else 0
 
                 else:
                     tx[field_key] = val
@@ -694,7 +694,7 @@ class CsvImportDialog(QDialog):
             tx.setdefault('type', 'OTHER')
             tx.setdefault('debit', 0.0)
             tx.setdefault('credit', 0.0)
-            tx.setdefault('reconciled', 0)
+            tx.setdefault('cleared', 0)
             tx.setdefault('description', '')
             tx.setdefault('memo', '')
             tx.setdefault('check_number', None)
@@ -721,7 +721,7 @@ class CsvImportDialog(QDialog):
                     description=tx.get('description', ''),
                     memo=tx.get('memo', ''),
                     category_id=tx.get('category_id'),
-                    reconciled=tx.get('reconciled', 0),
+                    cleared=tx.get('cleared', 0),
                     debit=tx.get('debit', 0.0),
                     credit=tx.get('credit', 0.0),
                     created_by_user_id=self.user_id

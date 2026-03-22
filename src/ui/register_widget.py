@@ -81,8 +81,7 @@ class RegisterWidget(QWidget):
         self._rec_panel = self._build_rec_panel()
         layout.addWidget(self._rec_panel)
         self._rec_panel.hide()
-        self._rec_target: float = None   # None = no target set
-        self._rec_target_date: str = None
+        self._rec_was_balanced = False   # track previous balance state for popup
 
         # ── Starting Balance row ──
         self._starting_bal_row = self._build_starting_balance_row()
@@ -93,7 +92,7 @@ class RegisterWidget(QWidget):
         self._table.setColumnCount(10)
         self._table.setHorizontalHeaderLabels([
             "Date", "Type", "Check #", "Description", "Memo",
-            "Category", "✓", "Debit", "Credit", "Balance"
+            "Category", "Cleared", "Debit", "Credit", "Balance"
         ])
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -331,17 +330,17 @@ class RegisterWidget(QWidget):
 
         self._rec_filter = QComboBox()
         self._rec_filter.setFixedWidth(120)
-        self._rec_filter.addItems(["All", "Reconciled", "Unreconciled"])
+        self._rec_filter.addItems(["All", "Cleared", "Uncleared"])
         self._rec_filter.currentTextChanged.connect(self._on_filter_changed)
         row2.addWidget(self._rec_filter)
 
-        find_btn = QPushButton("⚑ Find Unreconciled")
+        find_btn = QPushButton("⚑ Find Uncleared")
         find_btn.setStyleSheet(
             "QPushButton { background: transparent; color: #E07B39; border: 1px solid #E07B39; "
             "border-radius: 4px; padding: 3px 10px; font-size: 11px; font-weight: 600; min-height: 0; }"
             "QPushButton:hover { background: #FFF3E0; }"
         )
-        find_btn.clicked.connect(self._find_next_unreconciled)
+        find_btn.clicked.connect(self._find_next_uncleared)
         row2.addWidget(find_btn)
 
         row2.addStretch()
@@ -518,16 +517,16 @@ class RegisterWidget(QWidget):
         self._update_stat_card(self._ytd_debit_card, -ytd['ytd_debits'])
         self._update_stat_card(self._ytd_credit_card, ytd['ytd_credits'])
 
-        # Reconcile badge
-        unrec = self.db.get_unreconciled_count(self.account_id)
-        if unrec == 0:
-            self._rec_badge.setText("✓ All Reconciled")
+        # Cleared badge
+        uncleared = self.db.get_uncleared_count(self.account_id)
+        if uncleared == 0:
+            self._rec_badge.setText("✓ All Cleared")
             self._rec_badge.setStyleSheet(
                 "border-radius: 10px; padding: 3px 12px; font-size: 11px; "
                 "font-weight: 600; background-color: #E0F2F1; color: #2E7D32; border: none;"
             )
         else:
-            self._rec_badge.setText(f"⚠ {unrec} Unreconciled")
+            self._rec_badge.setText(f"⚠ {uncleared} Uncleared")
             self._rec_badge.setStyleSheet(
                 "border-radius: 10px; padding: 3px 12px; font-size: 11px; "
                 "font-weight: 600; background-color: #FFF3E0; color: #E65100; border: none;"
@@ -546,12 +545,12 @@ class RegisterWidget(QWidget):
         cat_name = self._cat_filter.currentText()
         cat_id = getattr(self, '_cat_filter_map', {}).get(cat_name, None)
         rec_f = self._rec_filter.currentText().lower()
-        if rec_f == "all":
-            rec_f = "all"
-        elif rec_f == "reconciled":
-            rec_f = "reconciled"
+        if rec_f == "cleared":
+            rec_f = "cleared"
+        elif rec_f == "uncleared":
+            rec_f = "uncleared"
         else:
-            rec_f = "unreconciled"
+            rec_f = "all"
         return from_d, to_d, search, type_f, cat_id, rec_f
 
     def _populate_table(self):
@@ -572,7 +571,7 @@ class RegisterWidget(QWidget):
             search=search,
             type_filter=type_f,
             category_id=cat_id,
-            reconciled_filter=rec_f
+            cleared_filter=rec_f
         )
 
         # Sort
@@ -584,7 +583,7 @@ class RegisterWidget(QWidget):
             COL_DESC: lambda r: (r.get('description') or '').lower(),
             COL_MEMO: lambda r: (r.get('memo') or '').lower(),
             COL_CAT: lambda r: (r.get('category_name') or '').lower(),
-            COL_REC: lambda r: r.get('reconciled', 0),
+            COL_REC: lambda r: r.get('cleared', 0),
             COL_DEBIT: lambda r: r.get('debit', 0),
             COL_CREDIT: lambda r: r.get('credit', 0),
             COL_BAL: lambda r: self._all_balances.get(r['id'], 0),
@@ -600,7 +599,7 @@ class RegisterWidget(QWidget):
         total_credit = 0.0
 
         for row_idx, tx in enumerate(rows):
-            is_rec = bool(tx.get('reconciled', 0))
+            is_rec = bool(tx.get('cleared', 0))
 
             def make_item(text, align=Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter):
                 item = QTableWidgetItem(str(text) if text is not None else "")
@@ -629,11 +628,20 @@ class RegisterWidget(QWidget):
             self._table.setItem(row_idx, COL_MEMO, make_item(tx.get('memo', '') or ''))
             self._table.setItem(row_idx, COL_CAT, make_item(tx.get('category_name', '') or ''))
 
-            # Reconciled checkbox indicator
-            rec_item = make_item("✓" if is_rec else "", Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-            if is_rec:
-                rec_item.setForeground(QBrush(QColor(COLOR_RECONCILED_TEXT)))
-            self._table.setItem(row_idx, COL_REC, rec_item)
+            # Cleared checkbox
+            rec_container = QWidget()
+            rec_container.setStyleSheet("background: transparent;")
+            rec_layout = QHBoxLayout(rec_container)
+            rec_layout.setContentsMargins(0, 0, 0, 0)
+            rec_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            from PyQt6.QtWidgets import QCheckBox as _CB
+            rec_cb = _CB()
+            rec_cb.setChecked(is_rec)
+            rec_cb.setStyleSheet("QCheckBox::indicator { width: 16px; height: 16px; }")
+            _tx_id = tx['id']
+            rec_cb.stateChanged.connect(lambda state, tid=_tx_id: self._on_cleared_changed(tid, state))
+            rec_layout.addWidget(rec_cb)
+            self._table.setCellWidget(row_idx, COL_REC, rec_container)
 
             # Debit
             debit = tx.get('debit', 0)
@@ -771,7 +779,7 @@ class RegisterWidget(QWidget):
                     description=data.get('description', ''),
                     memo=data.get('memo', ''),
                     category_id=data.get('category_id'),
-                    reconciled=data.get('reconciled', 0),
+                    cleared=data.get('cleared', data.get('reconciled', 0)),
                     debit=data.get('debit', 0.0),
                     credit=data.get('credit', 0.0),
                     created_by_user_id=self.user_id
@@ -804,7 +812,7 @@ class RegisterWidget(QWidget):
                     description=data.get('description', ''),
                     memo=data.get('memo', ''),
                     category_id=data.get('category_id'),
-                    reconciled=data.get('reconciled', 0),
+                    cleared=data.get('cleared', data.get('reconciled', 0)),
                     debit=data.get('debit', 0.0),
                     credit=data.get('credit', 0.0)
                 )
@@ -857,26 +865,62 @@ class RegisterWidget(QWidget):
             except Exception as e:
                 self._show_status_error(str(e))
 
-    def _mark_reconciled(self, reconciled: int):
+    def _on_cleared_changed(self, tx_id: int, state: int):
+        """Called when a Cleared checkbox in the table is toggled."""
+        from PyQt6.QtCore import Qt as _Qt
+        cleared = 1 if state == _Qt.CheckState.Checked.value else 0
+        try:
+            self.db.mark_cleared(tx_id, cleared)
+            # Update transaction list in-memory for rec panel calc
+            for tx in self._transactions:
+                if tx['id'] == tx_id:
+                    tx['cleared'] = cleared
+                    break
+            # Refresh badge + rec panel (no full table rebuild)
+            uncleared = self.db.get_uncleared_count(self.account_id)
+            if uncleared == 0:
+                self._rec_badge.setText("✓ All Cleared")
+                self._rec_badge.setStyleSheet(
+                    "border-radius: 10px; padding: 3px 12px; font-size: 11px; "
+                    "font-weight: 600; background-color: #E0F2F1; color: #2E7D32; border: none;"
+                )
+            else:
+                self._rec_badge.setText(f"⚠ {uncleared} Uncleared")
+                self._rec_badge.setStyleSheet(
+                    "border-radius: 10px; padding: 3px 12px; font-size: 11px; "
+                    "font-weight: 600; background-color: #FFF3E0; color: #E65100; border: none;"
+                )
+            self._update_rec_panel()
+        except Exception as e:
+            self._show_status_error(str(e))
+
+    def _mark_cleared(self, cleared: int):
         tx_id = self._get_selected_tx_id()
         if not tx_id:
             return
         try:
-            self.db.mark_reconciled(tx_id, reconciled)
+            self.db.mark_cleared(tx_id, cleared)
             self.refresh()
         except Exception as e:
             self._show_status_error(str(e))
 
-    def _find_next_unreconciled(self):
+    def _find_next_uncleared(self):
         for row in range(self._table.rowCount()):
             item = self._table.item(row, COL_DATE)
             if item:
                 tx_id = item.data(Qt.ItemDataRole.UserRole)
                 tx = next((t for t in self._transactions if t['id'] == tx_id), None)
-                if tx and not tx.get('reconciled', 0):
+                if tx and not tx.get('cleared', 0):
                     self._table.scrollToItem(item)
                     self._table.selectRow(row)
                     return
+
+    # Legacy
+    def _mark_reconciled(self, reconciled: int):
+        self._mark_cleared(reconciled)
+
+    def _find_next_unreconciled(self):
+        self._find_next_uncleared()
 
     def _show_context_menu(self, pos):
         menu = QMenu(self)
@@ -890,12 +934,12 @@ class RegisterWidget(QWidget):
 
         menu.addSeparator()
 
-        rec_act = QAction("Mark Reconciled", self)
-        rec_act.triggered.connect(lambda: self._mark_reconciled(1))
+        rec_act = QAction("Mark Cleared", self)
+        rec_act.triggered.connect(lambda: self._mark_cleared(1))
         menu.addAction(rec_act)
 
-        unrec_act = QAction("Mark Unreconciled", self)
-        unrec_act.triggered.connect(lambda: self._mark_reconciled(0))
+        unrec_act = QAction("Mark Uncleared", self)
+        unrec_act.triggered.connect(lambda: self._mark_cleared(0))
         menu.addAction(unrec_act)
 
         menu.exec(self._table.viewport().mapToGlobal(pos))
@@ -1027,7 +1071,7 @@ class RegisterWidget(QWidget):
         outer.setContentsMargins(16, 12, 16, 12)
         outer.setSpacing(24)
 
-        # ── Left: inputs ──
+        # ── Left: inputs + result ──
         left = QVBoxLayout()
         left.setSpacing(8)
 
@@ -1044,222 +1088,222 @@ class RegisterWidget(QWidget):
             "font-size: 11px; padding: 2px 6px; min-height: 0; }"
             "QPushButton:hover { color: #C62828; }"
         )
-        close_btn.clicked.connect(lambda: (
-            self._rec_panel.hide(),
-            self._stmt_btn.setChecked(False)
-        ))
+        close_btn.clicked.connect(self._hide_rec_panel)
         title_row.addWidget(close_btn)
         left.addLayout(title_row)
 
-        fields_row = QHBoxLayout()
-        fields_row.setSpacing(12)
-
-        fields_row.addWidget(QLabel("Ending Balance from Statement:"))
-        self._rec_target_spin = QDoubleSpinBox()
-        self._rec_target_spin.setPrefix("$ ")
-        self._rec_target_spin.setRange(-9_999_999.99, 9_999_999.99)
-        self._rec_target_spin.setDecimals(2)
-        self._rec_target_spin.setGroupSeparatorShown(True)
-        self._rec_target_spin.setFixedWidth(150)
-        self._rec_target_spin.setStyleSheet(
-            "background-color: white; border: 1.5px solid #81C784; border-radius: 4px; padding: 4px 8px;"
+        spin_style = (
+            "background-color: white; border: 1.5px solid #81C784; "
+            "border-radius: 4px; padding: 4px 8px;"
         )
-        fields_row.addWidget(self._rec_target_spin)
 
-        fields_row.addWidget(QLabel("Statement Date:"))
+        # Row 1: Start balance + End balance + Date
+        fields_row = QHBoxLayout()
+        fields_row.setSpacing(10)
+
+        lbl_start = QLabel("Statement Start Balance:")
+        lbl_start.setStyleSheet("color: #1B5E20; font-size: 11px; border: none; background: transparent;")
+        fields_row.addWidget(lbl_start)
+        self._rec_start_spin = QDoubleSpinBox()
+        self._rec_start_spin.setPrefix("$ ")
+        self._rec_start_spin.setRange(-9_999_999.99, 9_999_999.99)
+        self._rec_start_spin.setDecimals(2)
+        self._rec_start_spin.setGroupSeparatorShown(True)
+        self._rec_start_spin.setFixedWidth(140)
+        self._rec_start_spin.setStyleSheet(spin_style)
+        self._rec_start_spin.valueChanged.connect(self._update_rec_panel)
+        fields_row.addWidget(self._rec_start_spin)
+
+        lbl_end = QLabel("Statement End Balance:")
+        lbl_end.setStyleSheet("color: #1B5E20; font-size: 11px; border: none; background: transparent;")
+        fields_row.addWidget(lbl_end)
+        self._rec_end_spin = QDoubleSpinBox()
+        self._rec_end_spin.setPrefix("$ ")
+        self._rec_end_spin.setRange(-9_999_999.99, 9_999_999.99)
+        self._rec_end_spin.setDecimals(2)
+        self._rec_end_spin.setGroupSeparatorShown(True)
+        self._rec_end_spin.setFixedWidth(140)
+        self._rec_end_spin.setStyleSheet(spin_style)
+        self._rec_end_spin.valueChanged.connect(self._update_rec_panel)
+        fields_row.addWidget(self._rec_end_spin)
+
+        lbl_date = QLabel("Statement Date:")
+        lbl_date.setStyleSheet("color: #1B5E20; font-size: 11px; border: none; background: transparent;")
+        fields_row.addWidget(lbl_date)
         self._rec_date_edit = _QDE()
         self._rec_date_edit.setCalendarPopup(True)
         self._rec_date_edit.setDisplayFormat("MM/dd/yyyy")
         self._rec_date_edit.setDate(QDate.currentDate())
         self._rec_date_edit.setFixedWidth(120)
-        self._rec_date_edit.setStyleSheet(
-            "background-color: white; border: 1.5px solid #81C784; border-radius: 4px; padding: 4px 8px;"
-        )
+        self._rec_date_edit.setStyleSheet(spin_style)
+        self._rec_date_edit.dateChanged.connect(self._update_rec_panel)
         fields_row.addWidget(self._rec_date_edit)
-
-        set_btn = QPushButton("Set / Update Target")
-        set_btn.setStyleSheet(
-            "QPushButton { background-color: #2E7D32; color: white; border-radius: 4px; "
-            "padding: 5px 14px; font-size: 12px; font-weight: 600; min-height: 0; border: none; }"
-            "QPushButton:hover { background-color: #1B5E20; }"
-        )
-        set_btn.clicked.connect(self._set_rec_target)
-        fields_row.addWidget(set_btn)
-
-        clear_btn = QPushButton("✕ Clear")
-        clear_btn.setStyleSheet(
-            "QPushButton { background-color: transparent; color: #C62828; border: 1px solid #C62828; "
-            "border-radius: 4px; padding: 5px 10px; font-size: 12px; font-weight: 600; min-height: 0; }"
-            "QPushButton:hover { background-color: #FFEBEE; }"
-        )
-        clear_btn.clicked.connect(self._clear_rec_target)
-        fields_row.addWidget(clear_btn)
 
         fields_row.addStretch()
         left.addLayout(fields_row)
 
-        # Active target status line
-        self._rec_active_lbl = QLabel("")
-        self._rec_active_lbl.setStyleSheet(
-            "color: #1B5E20; font-size: 11px; font-weight: 600; border: none; background: transparent;"
+        # Live result row
+        self._rec_result_frame = QFrame()
+        self._rec_result_frame.setStyleSheet(
+            "QFrame { background-color: white; border: 1.5px solid #A5D6A7; border-radius: 6px; }"
         )
-        self._rec_active_lbl.hide()
-        left.addWidget(self._rec_active_lbl)
+        result_lay = QHBoxLayout(self._rec_result_frame)
+        result_lay.setContentsMargins(14, 8, 14, 8)
+        result_lay.setSpacing(20)
+
+        formula_lbl = QLabel("(End − Start) − Cleared Items  =")
+        formula_lbl.setStyleSheet("color: #555; font-size: 11px; border: none;")
+        result_lay.addWidget(formula_lbl)
+
+        self._rec_diff_lbl = QLabel("—")
+        self._rec_diff_lbl.setStyleSheet(
+            "color: #0D2B5C; font-size: 18px; font-weight: 700; border: none;"
+        )
+        self._rec_diff_lbl.setMinimumWidth(120)
+        result_lay.addWidget(self._rec_diff_lbl)
+
+        self._rec_progress_lbl = QLabel("")
+        self._rec_progress_lbl.setStyleSheet("color: #555; font-size: 11px; border: none;")
+        self._rec_progress_lbl.setWordWrap(True)
+        result_lay.addWidget(self._rec_progress_lbl, 1)
+
+        left.addWidget(self._rec_result_frame)
 
         hint = QLabel(
-            "Mark transactions as reconciled (✓) in the register. "
-            "The panel updates in real time as you check them."
+            "Tick the Cleared checkbox on each transaction as you match it to your statement. "
+            "When Remaining hits $0.00 you are reconciled."
         )
-        hint.setStyleSheet("color: #555; font-size: 11px; font-style: italic; border: none; background: transparent;")
+        hint.setStyleSheet("color: #555; font-size: 10px; font-style: italic; border: none; background: transparent;")
         left.addWidget(hint)
 
         outer.addLayout(left, 1)
-
-        # ── Right: live status display ──
-        self._rec_status_frame = QFrame()
-        self._rec_status_frame.setStyleSheet(
-            "QFrame { background-color: white; border: 1.5px solid #A5D6A7; "
-            "border-radius: 8px; min-width: 230px; max-width: 280px; }"
-        )
-        self._rec_status_frame.hide()
-        status_lay = QVBoxLayout(self._rec_status_frame)
-        status_lay.setContentsMargins(16, 12, 16, 12)
-        status_lay.setSpacing(4)
-
-        self._rec_target_lbl = QLabel("$0.00")
-        self._rec_target_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._rec_target_lbl.setStyleSheet(
-            "color: #0D2B5C; font-size: 28px; font-weight: 700; border: none;"
-        )
-        status_lay.addWidget(self._rec_target_lbl)
-
-        self._rec_target_sub = QLabel("Target Ending Balance")
-        self._rec_target_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._rec_target_sub.setStyleSheet(
-            "color: #888; font-size: 10px; letter-spacing: 0.5px; border: none;"
-        )
-        status_lay.addWidget(self._rec_target_sub)
-
-        # Divider
-        div = QFrame()
-        div.setFrameShape(QFrame.Shape.HLine)
-        div.setStyleSheet("border: none; background-color: #E8F5E9; max-height: 1px; margin: 6px 0;")
-        status_lay.addWidget(div)
-
-        self._rec_diff_lbl = QLabel("")
-        self._rec_diff_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._rec_diff_lbl.setStyleSheet(
-            "color: #1B5E20; font-size: 16px; font-weight: 700; border: none;"
-        )
-        self._rec_diff_lbl.setWordWrap(True)
-        status_lay.addWidget(self._rec_diff_lbl)
-
-        self._rec_progress_lbl = QLabel("")
-        self._rec_progress_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._rec_progress_lbl.setStyleSheet(
-            "color: #555; font-size: 10px; border: none;"
-        )
-        status_lay.addWidget(self._rec_progress_lbl)
-
-        outer.addWidget(self._rec_status_frame)
         return panel
+
+    def _hide_rec_panel(self):
+        self._rec_panel.hide()
+        self._stmt_btn.setChecked(False)
+        self._rec_header_card.hide()
 
     def _toggle_rec_panel(self):
         if self._rec_panel.isVisible():
-            self._rec_panel.hide()
-            self._stmt_btn.setChecked(False)
+            self._hide_rec_panel()
         else:
             self._rec_panel.show()
             self._stmt_btn.setChecked(True)
+            # Pre-fill start balance from account opening balance
+            account = self.db.get_account_by_id(self.account_id)
+            if account:
+                self._rec_start_spin.setValue(account['opening_balance'])
+            self._rec_header_card.show()
             self._update_rec_panel()
 
-    def _set_rec_target(self):
-        self._rec_target = self._rec_target_spin.value()
-        self._rec_target_date = self._rec_date_edit.date().toString("yyyy-MM-dd")
-        self._rec_header_card.show()
-        self._rec_status_frame.show()
-        # Show active target info line
-        display_date = self._rec_date_edit.date().toString("MM/dd/yyyy")
-        self._rec_active_lbl.setText(
-            f"Active target: {format_currency(self._rec_target)} through {display_date}"
-        )
-        self._rec_active_lbl.show()
-        self._update_rec_panel()
-
-    def _clear_rec_target(self):
-        self._rec_target = None
-        self._rec_target_date = None
-        self._rec_status_frame.hide()
-        self._rec_active_lbl.hide()
-        self._rec_active_lbl.setText("")
-        self._rec_header_card.hide()
-
     def _update_rec_panel(self):
-        """Recompute reconciled balance vs target and update status display."""
-        if self._rec_target is None or not self._rec_panel.isVisible():
+        """Live formula: Remaining = (End − Start) − Sum(cleared items ≤ date)."""
+        if not self._rec_panel.isVisible():
             return
 
-        # Sum reconciled transactions on or before the statement date
-        account = self.db.get_account_by_id(self.account_id)
-        opening = account['opening_balance'] if account else 0.0
+        start_bal = self._rec_start_spin.value()
+        end_bal = self._rec_end_spin.value()
+        stmt_date = self._rec_date_edit.date().toString("yyyy-MM-dd")
+
         all_txs = self.db.get_all_transactions_for_account(self.account_id)
-
-        rec_net = 0.0
+        cleared_net = 0.0
         for tx in all_txs:
-            if tx.get('reconciled') and tx.get('date', '') <= self._rec_target_date:
-                rec_net += tx.get('credit', 0.0) - tx.get('debit', 0.0)
+            if tx.get('cleared') and tx.get('date', '') <= stmt_date:
+                cleared_net += tx.get('credit', 0.0) - tx.get('debit', 0.0)
 
-        reconciled_balance = opening + rec_net
-        diff = self._rec_target - reconciled_balance
+        expected_change = end_bal - start_bal
+        remaining = expected_change - cleared_net
 
-        self._rec_target_lbl.setText(format_currency(self._rec_target))
-        # Show statement date in sub-label
-        try:
-            from PyQt6.QtCore import QDate as _QD
-            d = _QD.fromString(self._rec_target_date, "yyyy-MM-dd")
-            self._rec_target_sub.setText(f"Target Balance · {d.toString('MM/dd/yyyy')}")
-        except Exception:
-            self._rec_target_sub.setText("Target Ending Balance")
+        is_balanced = abs(remaining) < 0.005
 
-        if abs(diff) < 0.005:
-            self._rec_diff_lbl.setText("✓  Reconciled")
+        if is_balanced:
+            self._rec_diff_lbl.setText("$0.00  ✓")
             self._rec_diff_lbl.setStyleSheet(
-                f"color: {COLOR_GREEN}; font-size: 16px; font-weight: 700; border: none;"
+                f"color: {COLOR_GREEN}; font-size: 18px; font-weight: 700; border: none;"
             )
-        elif diff > 0:
-            self._rec_diff_lbl.setText(f"{format_currency(diff)}\nleft to reconcile")
+            self._rec_progress_lbl.setText("Reconciled!")
+            self._rec_progress_lbl.setStyleSheet(f"color: {COLOR_GREEN}; font-size: 11px; border: none;")
+        elif remaining > 0:
+            self._rec_diff_lbl.setText(format_currency(remaining))
             self._rec_diff_lbl.setStyleSheet(
-                "color: #1B5E20; font-size: 16px; font-weight: 700; border: none;"
+                "color: #0D2B5C; font-size: 18px; font-weight: 700; border: none;"
             )
+            self._rec_progress_lbl.setText(f"left to clear  ·  {format_currency(cleared_net)} cleared so far")
+            self._rec_progress_lbl.setStyleSheet("color: #555; font-size: 11px; border: none;")
         else:
-            self._rec_diff_lbl.setText(
-                f"{format_currency(abs(diff))} over ending balance\n— verify transactions"
-            )
+            self._rec_diff_lbl.setText(f"−{format_currency(abs(remaining))}")
             self._rec_diff_lbl.setStyleSheet(
-                f"color: {COLOR_RED}; font-size: 15px; font-weight: 700; border: none;"
+                f"color: {COLOR_RED}; font-size: 18px; font-weight: 700; border: none;"
             )
+            self._rec_progress_lbl.setText("over by this amount — verify your cleared items")
+            self._rec_progress_lbl.setStyleSheet(f"color: {COLOR_RED}; font-size: 11px; border: none;")
 
-        self._rec_progress_lbl.setText(
-            f"Reconciled balance: {format_currency(reconciled_balance)}  of  {format_currency(self._rec_target)} target"
-        )
-
-        # ── Update header card ──
-        self._rec_header_target_lbl.setText(format_currency(self._rec_target))
-        if abs(diff) < 0.005:
+        # Update header card
+        self._rec_header_card.show()
+        self._rec_header_target_lbl.setText(format_currency(end_bal))
+        if is_balanced:
             self._rec_header_diff_lbl.setText("✓ Reconciled")
             self._rec_header_diff_lbl.setStyleSheet(
                 f"font-size: 10px; font-weight: 600; color: {COLOR_GREEN}; border: none;"
             )
-        elif diff > 0:
-            self._rec_header_diff_lbl.setText(f"{format_currency(diff)} left")
+        elif remaining > 0:
+            self._rec_header_diff_lbl.setText(f"{format_currency(remaining)} left")
             self._rec_header_diff_lbl.setStyleSheet(
                 "font-size: 10px; font-weight: 600; color: #1B5E20; border: none;"
             )
         else:
-            self._rec_header_diff_lbl.setText(f"{format_currency(abs(diff))} over")
+            self._rec_header_diff_lbl.setText(f"{format_currency(abs(remaining))} over")
             self._rec_header_diff_lbl.setStyleSheet(
                 f"font-size: 10px; font-weight: 600; color: {COLOR_RED}; border: none;"
             )
+
+        # Fire RECONCILED! popup on transition to balanced
+        if is_balanced and not self._rec_was_balanced:
+            self._show_reconciled_popup()
+        self._rec_was_balanced = is_balanced
+
+    def _show_reconciled_popup(self):
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout as _VL, QPushButton as _PB, QLabel as _QL
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Reconciled!")
+        dlg.setFixedSize(340, 200)
+        dlg.setModal(False)
+        vl = _VL(dlg)
+        vl.setContentsMargins(30, 28, 30, 24)
+        vl.setSpacing(14)
+        vl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        icon = _QL("✓")
+        icon.setStyleSheet(
+            "font-size: 48px; color: #2E7D32; border: none; background: transparent;"
+        )
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        vl.addWidget(icon)
+
+        msg = _QL("RECONCILED!")
+        msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        msg.setStyleSheet(
+            "font-size: 22px; font-weight: 700; color: #1B5E20; border: none;"
+        )
+        vl.addWidget(msg)
+
+        sub = _QL("Your cleared items match the statement.")
+        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sub.setStyleSheet("color: #555; font-size: 12px; border: none;")
+        vl.addWidget(sub)
+
+        ok_btn = _PB("Great!")
+        ok_btn.setStyleSheet(
+            "QPushButton { background-color: #2E7D32; color: white; border: none; "
+            "border-radius: 5px; padding: 8px 28px; font-size: 13px; font-weight: 700; }"
+            "QPushButton:hover { background-color: #1B5E20; }"
+        )
+        ok_btn.clicked.connect(dlg.accept)
+        ok_btn.setDefault(True)
+        vl.addWidget(ok_btn, 0, Qt.AlignmentFlag.AlignCenter)
+
+        dlg.show()
 
     # -------------------------------------------------------------------------
     # CSV Import

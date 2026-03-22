@@ -36,7 +36,7 @@ class Transaction:
     memo: str
     category_id: Optional[int]
     category_name: str
-    reconciled: int
+    cleared: int
     debit: float
     credit: float
     balance: float

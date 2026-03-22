@@ -107,7 +107,7 @@ class Database:
                 description TEXT,
                 memo TEXT,
                 category_id INTEGER,
-                reconciled INTEGER DEFAULT 0,
+                cleared INTEGER DEFAULT 0,
                 debit REAL DEFAULT 0.0,
                 credit REAL DEFAULT 0.0,
                 created_by_user_id INTEGER,
@@ -136,7 +136,21 @@ class Database:
             );
         """)
         self.conn.commit()
+        self._migrate()
         self._seed_categories()
+
+    def _migrate(self):
+        """Rename legacy 'reconciled' column to 'cleared' if needed."""
+        try:
+            cols = [r[1] for r in self.conn.execute("PRAGMA table_info(transactions)").fetchall()]
+            if 'reconciled' in cols and 'cleared' not in cols:
+                self.conn.execute("ALTER TABLE transactions RENAME COLUMN reconciled TO cleared")
+                self.conn.commit()
+            elif 'reconciled' in cols and 'cleared' in cols:
+                self.conn.execute("UPDATE transactions SET cleared = reconciled WHERE cleared = 0 AND reconciled = 1")
+                self.conn.commit()
+        except Exception:
+            pass
 
     def _seed_categories(self):
         count = self._fetchone("SELECT COUNT(*) as c FROM categories")
@@ -246,32 +260,40 @@ class Database:
 
     def create_transaction(self, account_id: int, date: str, type: str,
                            check_number: str, description: str, memo: str,
-                           category_id: Optional[int], reconciled: int,
+                           category_id: Optional[int], cleared: int,
                            debit: float, credit: float,
-                           created_by_user_id: Optional[int]) -> int:
+                           created_by_user_id: Optional[int],
+                           # Legacy alias accepted but ignored
+                           reconciled: int = None) -> int:
+        if reconciled is not None and cleared == 0:
+            cleared = reconciled  # accept old callers
         cur = self._execute(
             """INSERT INTO transactions
                (account_id, date, type, check_number, description, memo,
-                category_id, reconciled, debit, credit, created_by_user_id,
+                category_id, cleared, debit, credit, created_by_user_id,
                 created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))""",
             (account_id, date, type, check_number, description, memo,
-             category_id, reconciled, debit, credit, created_by_user_id)
+             category_id, cleared, debit, credit, created_by_user_id)
         )
         return cur.lastrowid
 
     def update_transaction(self, transaction_id: int, date: str, type: str,
                            check_number: str, description: str, memo: str,
-                           category_id: Optional[int], reconciled: int,
-                           debit: float, credit: float) -> None:
+                           category_id: Optional[int], cleared: int,
+                           debit: float, credit: float,
+                           # Legacy alias
+                           reconciled: int = None) -> None:
+        if reconciled is not None and cleared == 0:
+            cleared = reconciled
         self._execute(
             """UPDATE transactions SET
                date=?, type=?, check_number=?, description=?, memo=?,
-               category_id=?, reconciled=?, debit=?, credit=?,
+               category_id=?, cleared=?, debit=?, credit=?,
                updated_at=datetime('now')
                WHERE id=?""",
             (date, type, check_number, description, memo,
-             category_id, reconciled, debit, credit, transaction_id)
+             category_id, cleared, debit, credit, transaction_id)
         )
 
     def delete_transaction(self, transaction_id: int) -> None:
@@ -285,7 +307,8 @@ class Database:
                          start_date: str = None, end_date: str = None,
                          search: str = None, type_filter: str = None,
                          category_id: int = None,
-                         reconciled_filter: str = 'all') -> List[Dict]:
+                         cleared_filter: str = 'all',
+                         reconciled_filter: str = None) -> List[Dict]:
         """
         Returns all transactions for an account, with optional filters.
         Always returns rows in ascending date order (for balance computation).
@@ -313,10 +336,11 @@ class Database:
         if category_id is not None:
             sql += " AND t.category_id = ?"
             params.append(category_id)
-        if reconciled_filter == 'reconciled':
-            sql += " AND t.reconciled = 1"
-        elif reconciled_filter == 'unreconciled':
-            sql += " AND t.reconciled = 0"
+        effective_filter = reconciled_filter if reconciled_filter is not None else cleared_filter
+        if effective_filter in ('cleared', 'reconciled'):
+            sql += " AND t.cleared = 1"
+        elif effective_filter in ('uncleared', 'unreconciled'):
+            sql += " AND t.cleared = 0"
 
         sql += " ORDER BY t.date ASC, t.created_at ASC"
         rows = self._fetchall(sql, tuple(params))
@@ -334,17 +358,22 @@ class Database:
         rows = self._fetchall(sql, (account_id,))
         return [dict(r) for r in rows]
 
-    def mark_reconciled(self, transaction_id: int, reconciled: int) -> None:
+    def mark_cleared(self, transaction_id: int, cleared: int) -> None:
         self._execute(
-            "UPDATE transactions SET reconciled=?, updated_at=datetime('now') WHERE id=?",
-            (reconciled, transaction_id)
+            "UPDATE transactions SET cleared=?, updated_at=datetime('now') WHERE id=?",
+            (cleared, transaction_id)
         )
+
+    # Legacy alias
+    def mark_reconciled(self, transaction_id: int, reconciled: int) -> None:
+        self.mark_cleared(transaction_id, reconciled)
 
     def get_transactions_for_export(self, account_ids: List[int],
                                     start_date: str = None, end_date: str = None,
                                     type_filter: List[str] = None,
                                     category_ids: List[int] = None,
-                                    reconciled_filter: str = 'all',
+                                    cleared_filter: str = 'all',
+                                    reconciled_filter: str = None,
                                     sort_order: str = 'date_asc') -> List[Dict]:
         placeholders = ','.join('?' * len(account_ids))
         sql = f"""
@@ -372,10 +401,11 @@ class Database:
             ph = ','.join('?' * len(category_ids))
             sql += f" AND t.category_id IN ({ph})"
             params.extend(category_ids)
-        if reconciled_filter == 'reconciled':
-            sql += " AND t.reconciled = 1"
-        elif reconciled_filter == 'unreconciled':
-            sql += " AND t.reconciled = 0"
+        eff = reconciled_filter if reconciled_filter is not None else cleared_filter
+        if eff in ('cleared', 'reconciled'):
+            sql += " AND t.cleared = 1"
+        elif eff in ('uncleared', 'unreconciled'):
+            sql += " AND t.cleared = 0"
 
         sort_map = {
             'date_asc': 'ORDER BY t.date ASC, t.created_at ASC',
@@ -520,12 +550,16 @@ class Database:
             'ytd_credits': row['ytd_credits'] if row else 0.0
         }
 
-    def get_unreconciled_count(self, account_id: int) -> int:
+    def get_uncleared_count(self, account_id: int) -> int:
         row = self._fetchone(
-            "SELECT COUNT(*) as c FROM transactions WHERE account_id=? AND reconciled=0",
+            "SELECT COUNT(*) as c FROM transactions WHERE account_id=? AND cleared=0",
             (account_id,)
         )
         return row['c'] if row else 0
+
+    # Legacy alias
+    def get_unreconciled_count(self, account_id: int) -> int:
+        return self.get_uncleared_count(account_id)
 
     def get_annual_monthly_breakdown(self, year: int, user_id: int) -> Dict:
         """

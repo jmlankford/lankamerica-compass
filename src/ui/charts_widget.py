@@ -72,7 +72,8 @@ class ChartsWidget(QWidget):
         ctrl.setStyleSheet(
             f"background-color: {COLOR_WHITE}; border: 1px solid {COLOR_BORDER}; border-radius: 6px;"
         )
-        ctrl_lay = QHBoxLayout(ctrl)
+        ctrl_inner = QWidget()
+        ctrl_lay = QHBoxLayout(ctrl_inner)
         ctrl_lay.setContentsMargins(12, 8, 12, 8)
         ctrl_lay.setSpacing(12)
 
@@ -145,6 +146,17 @@ class ChartsWidget(QWidget):
         pdf_btn.setProperty("secondary", True)
         pdf_btn.clicked.connect(lambda: self._export_chart('pdf', 'pie'))
         ctrl_lay.addWidget(pdf_btn)
+
+        ctrl_scroll = QScrollArea()
+        ctrl_scroll.setWidget(ctrl_inner)
+        ctrl_scroll.setWidgetResizable(False)
+        ctrl_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        ctrl_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        ctrl_scroll.setFixedHeight(ctrl_inner.sizeHint().height() + 18)
+        ctrl_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        ctrl_lay2 = QVBoxLayout(ctrl)
+        ctrl_lay2.setContentsMargins(0, 0, 0, 0)
+        ctrl_lay2.addWidget(ctrl_scroll)
 
         vlay.addWidget(ctrl)
 

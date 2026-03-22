@@ -124,8 +124,8 @@ class TransactionDialog(QDialog):
         form2.addRow("Amount *", self._amount_spin)
         layout.addLayout(form2)
 
-        # Reconciled
-        self._reconciled_cb = QCheckBox("Mark as Reconciled")
+        # Cleared
+        self._reconciled_cb = QCheckBox("Mark as Cleared")
         layout.addWidget(self._reconciled_cb)
 
         # Error
@@ -237,7 +237,7 @@ class TransactionDialog(QDialog):
             self._debit_radio.setChecked(True)
             self._amount_spin.setValue(t.get('debit', 0.0))
 
-        self._reconciled_cb.setChecked(bool(t.get('reconciled', 0)))
+        self._reconciled_cb.setChecked(bool(t.get('cleared', t.get('reconciled', 0))))
 
     def _save(self):
         self._error_label.hide()
@@ -261,7 +261,7 @@ class TransactionDialog(QDialog):
             'description': self._desc_edit.text().strip(),
             'memo': self._memo_edit.text().strip(),
             'category_id': self.get_selected_category_id(),
-            'reconciled': 1 if self._reconciled_cb.isChecked() else 0,
+            'cleared': 1 if self._reconciled_cb.isChecked() else 0,
             'debit': debit,
             'credit': credit,
         }

@@ -24,7 +24,7 @@ EXPORT_COLUMNS = [
     ("description",  "Description"),
     ("memo",         "Memo"),
     ("category_name","Category"),
-    ("reconciled",   "Reconciled"),
+    ("cleared",      "Cleared"),
     ("debit",        "Debit"),
     ("credit",       "Credit"),
     ("balance",      "Balance"),
@@ -153,12 +153,12 @@ class ExportDialog(QDialog):
         all_cat_cb.toggled.connect(lambda checked: [cb.setChecked(checked) for cb in self._cat_checks.values()])
         content_lay.addWidget(cat_group)
 
-        # 5. Reconciled Status
-        rec_group = QGroupBox("Reconciled Status")
+        # 5. Cleared Status
+        rec_group = QGroupBox("Cleared Status")
         rec_lay = QHBoxLayout(rec_group)
         self._rec_all = QRadioButton("All")
-        self._rec_only = QRadioButton("Reconciled Only")
-        self._rec_unrec = QRadioButton("Unreconciled Only")
+        self._rec_only = QRadioButton("Cleared Only")
+        self._rec_unrec = QRadioButton("Uncleared Only")
         self._rec_all.setChecked(True)
         for rb in [self._rec_all, self._rec_only, self._rec_unrec]:
             rec_lay.addWidget(rb)
@@ -241,9 +241,9 @@ class ExportDialog(QDialog):
         if self._rec_all.isChecked():
             rec_filter = 'all'
         elif self._rec_only.isChecked():
-            rec_filter = 'reconciled'
+            rec_filter = 'cleared'
         else:
-            rec_filter = 'unreconciled'
+            rec_filter = 'uncleared'
 
         sort_order = self._sort_combo.currentData()
 
@@ -266,7 +266,8 @@ class ExportDialog(QDialog):
             balances_by_account[aid] = self.db.get_running_balance(aid)
 
         rows = self.db.get_transactions_for_export(
-            account_ids, start, end, type_filter, cat_ids, rec_filter, sort_order
+            account_ids, start, end, type_filter, cat_ids,
+            cleared_filter=rec_filter, sort_order=sort_order
         )
 
         try:
@@ -291,8 +292,8 @@ class ExportDialog(QDialog):
                         except Exception:
                             pass
                     # Reconciled
-                    if 'reconciled' in row_dict:
-                        row_dict['reconciled'] = "Yes" if row_dict['reconciled'] else "No"
+                    if 'cleared' in row_dict:
+                        row_dict['cleared'] = "Yes" if row_dict['cleared'] else "No"
                     csv_row = [row_dict.get(k, '') for k in col_keys]
                     writer.writerow(csv_row)
             self.accept()

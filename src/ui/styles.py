@@ -394,6 +394,22 @@ QSplitter::handle:vertical {{
     height: 2px;
 }}
 
+/* ===== Dialog Button Box ===== */
+QDialogButtonBox QPushButton {
+    background-color: #0D2B5C;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 5px;
+    padding: 7px 18px;
+    font-size: 13px;
+    font-weight: 600;
+    min-height: 32px;
+    min-width: 80px;
+}
+QDialogButtonBox QPushButton:hover {
+    background-color: #1565C0;
+}
+
 /* ===== Status Bar ===== */
 QStatusBar {{
     background-color: {COLOR_NAVY};
