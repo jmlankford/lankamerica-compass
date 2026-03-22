@@ -67,8 +67,9 @@ class TransactionDialog(QDialog):
         # Check number
         self._check_edit = QLineEdit()
         self._check_edit.setPlaceholderText("Check number")
-        self._check_edit.setEnabled(False)
         form.addRow("Check #", self._check_edit)
+        # Apply initial enabled state based on default type selection
+        self._on_type_changed(self._type_combo.currentText())
 
         # Description
         self._desc_edit = QLineEdit()

@@ -84,6 +84,10 @@ class RegisterWidget(QWidget):
         self._rec_target: float = None   # None = no target set
         self._rec_target_date: str = None
 
+        # ── Starting Balance row ──
+        self._starting_bal_row = self._build_starting_balance_row()
+        layout.addWidget(self._starting_bal_row)
+
         # ── Table ──
         self._table = QTableWidget()
         self._table.setColumnCount(10)
@@ -266,13 +270,14 @@ class RegisterWidget(QWidget):
         row1.addStretch()
         main.addLayout(row1)
 
-        # Row 2: search + filters + buttons
+        # Row 2: search + filter combos + find button
         row2 = QHBoxLayout()
         row2.setSpacing(8)
 
         self._search_edit = QLineEdit()
         self._search_edit.setPlaceholderText("Search description or memo…")
-        self._search_edit.setFixedWidth(210)
+        self._search_edit.setMinimumWidth(150)
+        self._search_edit.setMaximumWidth(230)
         self._search_edit.textChanged.connect(self._on_filter_changed)
         row2.addWidget(self._search_edit)
 
@@ -291,12 +296,12 @@ class RegisterWidget(QWidget):
         row2.addWidget(self._cat_filter)
 
         self._rec_filter = QComboBox()
-        self._rec_filter.setFixedWidth(130)
+        self._rec_filter.setFixedWidth(120)
         self._rec_filter.addItems(["All", "Reconciled", "Unreconciled"])
         self._rec_filter.currentTextChanged.connect(self._on_filter_changed)
         row2.addWidget(self._rec_filter)
 
-        find_btn = QPushButton("Find Next Unreconciled")
+        find_btn = QPushButton("⚑ Find Unreconciled")
         find_btn.setStyleSheet(
             "QPushButton { background: transparent; color: #E07B39; border: 1px solid #E07B39; "
             "border-radius: 4px; padding: 3px 10px; font-size: 11px; font-weight: 600; min-height: 0; }"
@@ -305,6 +310,13 @@ class RegisterWidget(QWidget):
         find_btn.clicked.connect(self._find_next_unreconciled)
         row2.addWidget(find_btn)
 
+        row2.addStretch()
+        main.addLayout(row2)
+
+        # Row 3: action buttons (always own row — never crowd filters)
+        row3 = QHBoxLayout()
+        row3.setSpacing(8)
+
         import_btn = QPushButton("⬆ Import CSV")
         import_btn.setStyleSheet(
             "QPushButton { background: transparent; color: #1565C0; border: 1px solid #1565C0; "
@@ -312,7 +324,7 @@ class RegisterWidget(QWidget):
             "QPushButton:hover { background: #EEF4FB; }"
         )
         import_btn.clicked.connect(self._import_csv)
-        row2.addWidget(import_btn)
+        row3.addWidget(import_btn)
 
         self._stmt_btn = QPushButton("⚖ Statement Balance")
         self._stmt_btn.setCheckable(True)
@@ -323,9 +335,9 @@ class RegisterWidget(QWidget):
             "QPushButton:checked { background: #2E7D32; color: white; }"
         )
         self._stmt_btn.clicked.connect(self._toggle_rec_panel)
-        row2.addWidget(self._stmt_btn)
+        row3.addWidget(self._stmt_btn)
 
-        row2.addStretch()
+        row3.addStretch()
 
         refresh_btn = QPushButton("↻ Refresh")
         refresh_btn.setStyleSheet(
@@ -335,7 +347,7 @@ class RegisterWidget(QWidget):
             "QPushButton:hover { background-color: #EEF4FB; border-color: #1565C0; color: #1565C0; }"
         )
         refresh_btn.clicked.connect(self.refresh)
-        row2.addWidget(refresh_btn)
+        row3.addWidget(refresh_btn)
 
         add_btn = QPushButton("+ Add Transaction")
         add_btn.setStyleSheet(
@@ -345,9 +357,9 @@ class RegisterWidget(QWidget):
             "QPushButton:hover { background-color: #c9692a; }"
         )
         add_btn.clicked.connect(self._add_transaction)
-        row2.addWidget(add_btn)
+        row3.addWidget(add_btn)
 
-        main.addLayout(row2)
+        main.addLayout(row3)
         return frame
 
     def _build_month_bar(self) -> QWidget:
@@ -440,6 +452,7 @@ class RegisterWidget(QWidget):
         self._account = self.db.get_account_by_id(self.account_id)
         if not self._account:
             return
+        self._refresh_starting_balance()
         self._acct_name_lbl.setText(self._account['name'])
         atype = self._account.get('type', 'Other')
         colors = ACCOUNT_TYPE_COLORS.get(atype, ("#546E7A", "#FFFFFF"))
@@ -855,6 +868,119 @@ class RegisterWidget(QWidget):
 
     # -------------------------------------------------------------------------
     # Statement reconciliation panel
+    # -------------------------------------------------------------------------
+    # Starting Balance row
+    # -------------------------------------------------------------------------
+
+    def _build_starting_balance_row(self) -> QFrame:
+        row = QFrame()
+        row.setStyleSheet(
+            f"QFrame {{ background-color: #EEF4FB; border-left: 4px solid {COLOR_NAVY}; "
+            f"border-top: 1px solid {COLOR_BORDER}; border-bottom: 1px solid {COLOR_BORDER}; "
+            f"border-right: 1px solid {COLOR_BORDER}; }}"
+        )
+        hlay = QHBoxLayout(row)
+        hlay.setContentsMargins(10, 4, 10, 4)
+        hlay.setSpacing(8)
+
+        icon_lbl = QLabel("▸")
+        icon_lbl.setStyleSheet(f"color: {COLOR_NAVY}; font-size: 12px; font-weight: 700; border: none;")
+        hlay.addWidget(icon_lbl)
+
+        desc_lbl = QLabel("Starting Balance")
+        desc_lbl.setStyleSheet(f"color: {COLOR_NAVY}; font-size: 12px; font-weight: 700; border: none;")
+        hlay.addWidget(desc_lbl)
+
+        hlay.addStretch()
+
+        self._starting_bal_lbl = QLabel("$0.00")
+        self._starting_bal_lbl.setStyleSheet(
+            f"color: {COLOR_NAVY}; font-size: 13px; font-weight: 700; border: none;"
+        )
+        hlay.addWidget(self._starting_bal_lbl)
+
+        edit_btn = QPushButton("✎ Edit")
+        edit_btn.setStyleSheet(
+            "QPushButton { background-color: transparent; color: #1565C0; border: 1px solid #1565C0; "
+            "border-radius: 4px; padding: 2px 10px; font-size: 11px; font-weight: 600; min-height: 0; }"
+            "QPushButton:hover { background-color: #EEF4FB; }"
+        )
+        edit_btn.clicked.connect(self._edit_starting_balance)
+        hlay.addWidget(edit_btn)
+
+        return row
+
+    def _refresh_starting_balance(self):
+        account = self.db.get_account_by_id(self.account_id)
+        if account:
+            self._starting_bal_lbl.setText(format_currency(account['opening_balance']))
+
+    def _edit_starting_balance(self):
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout as _HBox, QDoubleSpinBox
+        account = self.db.get_account_by_id(self.account_id)
+        if not account:
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Edit Starting Balance")
+        dlg.setFixedWidth(360)
+        dlg.setModal(True)
+        vlay = QVBoxLayout(dlg)
+        vlay.setContentsMargins(24, 20, 24, 20)
+        vlay.setSpacing(14)
+
+        lbl = QLabel("Set the starting (opening) balance for this account.\nThis affects all running balances.")
+        lbl.setWordWrap(True)
+        lbl.setStyleSheet("color: #1A1A2E; font-size: 13px;")
+        vlay.addWidget(lbl)
+
+        spin = QDoubleSpinBox()
+        spin.setPrefix("$ ")
+        spin.setRange(-9_999_999.99, 9_999_999.99)
+        spin.setDecimals(2)
+        spin.setGroupSeparatorShown(True)
+        spin.setValue(account['opening_balance'])
+        spin.setStyleSheet(
+            "QDoubleSpinBox { background-color: white; border: 1.5px solid #C5D5E8; "
+            "border-radius: 4px; padding: 5px 9px; font-size: 14px; color: #1A1A2E; min-height: 32px; }"
+        )
+        vlay.addWidget(spin)
+
+        btn_row = _HBox()
+        btn_row.setSpacing(10)
+        cancel_b = QPushButton("Cancel")
+        cancel_b.setStyleSheet(
+            "QPushButton { background-color: transparent; color: #0D2B5C; "
+            "border: 2px solid #0D2B5C; border-radius: 5px; padding: 7px 18px; "
+            "font-size: 13px; font-weight: 600; min-height: 32px; }"
+            "QPushButton:hover { background-color: #EEF4FB; }"
+        )
+        cancel_b.clicked.connect(dlg.reject)
+        save_b = QPushButton("Save")
+        save_b.setStyleSheet(
+            "QPushButton { background-color: #0D2B5C; color: #FFFFFF; "
+            "border: none; border-radius: 5px; padding: 7px 18px; "
+            "font-size: 13px; font-weight: 600; min-height: 32px; }"
+            "QPushButton:hover { background-color: #1565C0; }"
+        )
+        save_b.clicked.connect(dlg.accept)
+        btn_row.addStretch()
+        btn_row.addWidget(cancel_b)
+        btn_row.addWidget(save_b)
+        vlay.addLayout(btn_row)
+
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            new_bal = spin.value()
+            self.db.update_account(
+                self.account_id,
+                account['name'],
+                account['type'],
+                new_bal,
+                account.get('notes', '') or ''
+            )
+            self._refresh_starting_balance()
+            self.refresh()
+
     # -------------------------------------------------------------------------
 
     def _build_rec_panel(self) -> QFrame:
