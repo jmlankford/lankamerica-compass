@@ -170,6 +170,11 @@ class RegisterWidget(QWidget):
         for card in [self._balance_card, self._ytd_debit_card, self._ytd_credit_card]:
             hlay.addWidget(card)
 
+        # Reconciliation header card (hidden until a target is set)
+        self._rec_header_card = self._make_rec_header_card()
+        self._rec_header_card.hide()
+        hlay.addWidget(self._rec_header_card)
+
         # Reconcile badge
         self._rec_badge = QLabel("— Loading")
         self._rec_badge.setStyleSheet(
@@ -178,6 +183,35 @@ class RegisterWidget(QWidget):
         )
         hlay.addWidget(self._rec_badge, 0, Qt.AlignmentFlag.AlignVCenter)
         return frame
+
+    def _make_rec_header_card(self) -> QFrame:
+        card = QFrame()
+        card.setStyleSheet(
+            "QFrame { background-color: #F0FAF1; border: 1.5px solid #81C784; border-radius: 8px; padding: 4px; }"
+        )
+        card.setFixedWidth(160)
+        vlay = QVBoxLayout(card)
+        vlay.setContentsMargins(10, 8, 10, 8)
+        vlay.setSpacing(2)
+
+        lbl = QLabel("Statement Rec.")
+        lbl.setStyleSheet("font-size: 10px; color: #2E7D32; font-weight: 500; border: none;")
+        vlay.addWidget(lbl)
+
+        self._rec_header_target_lbl = QLabel("$0.00")
+        self._rec_header_target_lbl.setStyleSheet(
+            "font-size: 15px; font-weight: 700; color: #1B5E20; border: none;"
+        )
+        vlay.addWidget(self._rec_header_target_lbl)
+
+        self._rec_header_diff_lbl = QLabel("")
+        self._rec_header_diff_lbl.setStyleSheet(
+            "font-size: 10px; font-weight: 600; color: #2E7D32; border: none;"
+        )
+        self._rec_header_diff_lbl.setWordWrap(True)
+        vlay.addWidget(self._rec_header_diff_lbl)
+
+        return card
 
     def _make_stat_card(self, label: str, value: str, color: str) -> QFrame:
         card = QFrame()
@@ -1142,6 +1176,7 @@ class RegisterWidget(QWidget):
     def _set_rec_target(self):
         self._rec_target = self._rec_target_spin.value()
         self._rec_target_date = self._rec_date_edit.date().toString("yyyy-MM-dd")
+        self._rec_header_card.show()
         self._rec_status_frame.show()
         # Show active target info line
         display_date = self._rec_date_edit.date().toString("MM/dd/yyyy")
@@ -1157,6 +1192,7 @@ class RegisterWidget(QWidget):
         self._rec_status_frame.hide()
         self._rec_active_lbl.hide()
         self._rec_active_lbl.setText("")
+        self._rec_header_card.hide()
 
     def _update_rec_panel(self):
         """Recompute reconciled balance vs target and update status display."""
@@ -1206,6 +1242,24 @@ class RegisterWidget(QWidget):
         self._rec_progress_lbl.setText(
             f"Reconciled balance: {format_currency(reconciled_balance)}  of  {format_currency(self._rec_target)} target"
         )
+
+        # ── Update header card ──
+        self._rec_header_target_lbl.setText(format_currency(self._rec_target))
+        if abs(diff) < 0.005:
+            self._rec_header_diff_lbl.setText("✓ Reconciled")
+            self._rec_header_diff_lbl.setStyleSheet(
+                f"font-size: 10px; font-weight: 600; color: {COLOR_GREEN}; border: none;"
+            )
+        elif diff > 0:
+            self._rec_header_diff_lbl.setText(f"{format_currency(diff)} left")
+            self._rec_header_diff_lbl.setStyleSheet(
+                "font-size: 10px; font-weight: 600; color: #1B5E20; border: none;"
+            )
+        else:
+            self._rec_header_diff_lbl.setText(f"{format_currency(abs(diff))} over")
+            self._rec_header_diff_lbl.setStyleSheet(
+                f"font-size: 10px; font-weight: 600; color: {COLOR_RED}; border: none;"
+            )
 
     # -------------------------------------------------------------------------
     # CSV Import

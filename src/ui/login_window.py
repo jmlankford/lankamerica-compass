@@ -3,7 +3,7 @@ login_window.py — Login / Register window for LankAmerica Compass
 """
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QTabWidget, QFrame, QFileDialog, QApplication
+    QPushButton, QTabWidget, QFrame, QFileDialog, QApplication, QCheckBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
 from PyQt6.QtGui import QPixmap, QFont
@@ -142,6 +142,19 @@ class LoginWindow(QWidget):
         self._login_password.setEchoMode(QLineEdit.EchoMode.Password)
         layout.addWidget(self._login_password)
 
+        # Remember me
+        self._remember_cb = QCheckBox("Remember my username")
+        self._remember_cb.setStyleSheet("font-size: 12px; color: #555;")
+        layout.addWidget(self._remember_cb)
+
+        # Pre-fill saved username if present
+        cfg = load_config()
+        saved_username = cfg.get('saved_username', '')
+        if saved_username:
+            self._login_username.setText(saved_username)
+            self._remember_cb.setChecked(True)
+            self._login_password.setFocus()
+
         # Error label
         self._login_error = QLabel("")
         self._login_error.setProperty("error", True)
@@ -216,7 +229,9 @@ class LoginWindow(QWidget):
             self._db_path_edit.setText(path)
             self._db_path_edit.setToolTip(path)
             self._init_db()
-            save_config({'db_path': path})
+            cfg = load_config()
+            cfg['db_path'] = path
+            save_config(cfg)
 
     def _show_login_error(self, msg: str):
         self._login_error.setText(msg)
@@ -246,7 +261,15 @@ class LoginWindow(QWidget):
             self._show_login_error("Invalid username or password.")
             return
 
-        save_config({'db_path': self._db_path})
+        # Persist or clear saved username
+        cfg = load_config()
+        if self._remember_cb.isChecked():
+            cfg['saved_username'] = username
+        else:
+            cfg.pop('saved_username', None)
+        cfg['db_path'] = self._db_path
+        save_config(cfg)
+
         self.login_success.emit(user, self._db_path)
 
     def _do_register(self):
